@@ -14,9 +14,11 @@ def after_install():
 
 def after_sync():
 	create_lms_roles()
+	# Creates the LMS Trainer/Master Trainer/Manager/HR roles — must run
+	# before give_lms_roles_to_admin references them on a fresh site
+	setup_jamboree_roles()
 	set_default_certificate_print_format()
 	give_lms_roles_to_admin()
-	setup_jamboree_roles()
 
 
 def before_uninstall():
@@ -183,6 +185,8 @@ def give_lms_roles_to_admin():
 		"LMS HR",
 	]
 	for role in roles:
+		if not frappe.db.exists("Role", role):
+			continue
 		if not frappe.db.exists("Has Role", {"parent": "Administrator", "role": role}):
 			doc = frappe.new_doc("Has Role")
 			doc.parent = "Administrator"
