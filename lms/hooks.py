@@ -54,12 +54,14 @@ web_include_js = []
 # ----------
 
 # application home page (will override Website Settings)
-# home_page = "login"
+home_page = get_lms_path()
 
 # website user home page (by Role)
-# role_home_page = {
-# 	"Role": "home_page"
-# }
+role_home_page = {
+	"System Manager": get_lms_path(),
+	"Guest": get_lms_path(),
+	"All": get_lms_path(),
+}
 
 # Generators
 # ----------
@@ -91,6 +93,8 @@ after_migrate = [
 
 permission_query_conditions = {
 	"LMS Certificate": "lms.lms.doctype.lms_certificate.lms_certificate.get_permission_query_conditions",
+	"LMS Batch Enrollment": "lms.lms.custom.batch_enrollment_approval.get_manager_permission_query_condition",
+	"DocType": "lms.app_permissions.filter_importable_doctypes",
 }
 
 has_permission = {
@@ -100,6 +104,7 @@ has_permission = {
 	"LMS Certificate": "lms.lms.doctype.lms_certificate.lms_certificate.has_permission",
 	"Course Lesson": "lms.lms.doctype.course_lesson.course_lesson.has_permission",
 	"File": "lms.lms.permissions.file_has_permission",
+	"LMS Batch Enrollment": "lms.lms.custom.batch_enrollment_approval.has_permission",
 }
 
 # DocType Class
@@ -128,6 +133,13 @@ doc_events = {
 	"User": {
 		"validate": "lms.lms.user.validate_username_duplicates",
 		"before_insert": "lms.lms.user.add_lms_student_role",
+		"on_update": "lms.lms.user.on_update",
+	},
+	"LMS Quiz Submission": {
+		"after_insert": "lms.lms.custom.notifications.notify_on_quiz_submission",
+	},
+	"LMS Enrollment": {
+		"on_update": "lms.lms.custom.notifications.notify_on_course_completion",
 	},
 }
 
@@ -149,6 +161,7 @@ scheduler_events = {
 		"lms.lms.doctype.lms_batch.lms_batch.send_batch_start_reminder",
 		"lms.lms.doctype.lms_live_class.lms_live_class.send_live_class_reminder",
 		"lms.lms.doctype.lms_course.lms_course.send_notification_for_published_courses",
+		"lms.lms.custom.notifications.check_student_progress_alerts",
 	],
 }
 
@@ -164,6 +177,7 @@ fixtures = ["Custom Field", "Function", "Industry", "LMS Category"]
 #
 override_whitelisted_methods = {
 	# "frappe.desk.search.get_names_for_mentions": "lms.lms.utils.get_names_for_mentions",
+	"frappe.desk.search.search_link": "lms.app_permissions.search_link_override",
 }
 #
 # each overriding function accepts a `data` argument;
@@ -229,6 +243,7 @@ jinja = {
 
 extend_bootinfo = [
 	"lms.lms.utils.extend_bootinfo",
+	"lms.boot.extend_bootinfo",
 ]
 ## Specify the additional tabs to be included in the user profile page.
 ## Each entry must be a subclass of lms.lms.plugins.ProfileTab

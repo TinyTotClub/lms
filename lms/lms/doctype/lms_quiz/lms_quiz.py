@@ -128,9 +128,23 @@ def submit_quiz(quiz: str, results: str | None = None):
 			"course",
 			"enable_negative_marking",
 			"marks_to_cut",
+			"max_attempts",
 		],
 		as_dict=1,
 	)
+
+	if quiz_details.max_attempts:
+		attempt_count = frappe.db.count(
+			"LMS Quiz Submission",
+			{
+				"quiz": quiz,
+				"member": frappe.session.user,
+			},
+		)
+		if attempt_count >= quiz_details.max_attempts:
+			frappe.throw(
+				_("You have exhausted all {0} attempts for this quiz.").format(quiz_details.max_attempts)
+			)
 
 	data = process_results(results, quiz_details)
 	is_open_ended = data["is_open_ended"]

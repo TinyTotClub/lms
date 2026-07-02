@@ -15,7 +15,10 @@
   "section_break_uoob",
   "is_scorm_chapter",
   "column_break_wskp",
-  "scorm_content"
+  "scorm_content",
+  "manually_unlocked",
+  "unlocked_by",
+  "unlock_date"
  ],
  "fields": [
   {
@@ -97,11 +100,33 @@
    "fieldtype": "Long Text",
    "label": "SCORM Content",
    "read_only": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "manually_unlocked",
+   "fieldtype": "Check",
+   "label": "Manually Unlocked",
+   "read_only": 1
+  },
+  {
+   "depends_on": "manually_unlocked",
+   "fieldname": "unlocked_by",
+   "fieldtype": "Link",
+   "label": "Unlocked By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "depends_on": "manually_unlocked",
+   "fieldname": "unlock_date",
+   "fieldtype": "Datetime",
+   "label": "Unlock Date",
+   "read_only": 1
   }
  ],
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-01-28 18:10:51.370989",
+ "modified": "2026-07-02 13:30:00.000000",
  "modified_by": "sayali@frappe.io",
  "module": "LMS",
  "name": "LMS Course Progress",
