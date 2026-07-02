@@ -17,7 +17,12 @@ configure_site() {
     if [ -n "${MOBILE_PACKAGE_NAME:-}" ]; then
         bench --site "$SITE_NAME" set-config mobile_package_name "$MOBILE_PACKAGE_NAME"
     fi
-    bench --site "$SITE_NAME" execute lms_mobile_bridge.dev_seed.seed_dev_site
+    if bench --site "$SITE_NAME" list-apps 2>/dev/null | grep -q "lms_mobile_bridge"; then
+        bench --site "$SITE_NAME" execute lms_mobile_bridge.dev_seed.seed_dev_site
+    else
+        echo "lms_mobile_bridge not installed on $SITE_NAME — skipping seed."
+        echo "If a previous first boot failed, wipe with 'docker compose down -v' and re-up."
+    fi
     bench --site "$SITE_NAME" clear-cache
 }
 
