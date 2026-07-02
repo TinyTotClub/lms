@@ -28,9 +28,9 @@ docker compose up
 
 First boot builds the whole bench (several minutes). Then:
 
-- Web/SPA: http://localhost:8000 (Administrator / admin — change outside local dev)
+- Web/SPA: http://localhost:8090 (Administrator / admin — change outside local dev)
 - Firebase login: `POST /api/v2/method/mobile_auth.login_with_firebase`
-- Flutter app: `flutter run --dart-define=LMS_BASE_URL=http://<lan-ip>:8000`
+- Flutter app: `flutter run --dart-define=LMS_BASE_URL=http://<lan-ip>:8090`
 
 The init script auto-configures the site (developer_mode, CORS, Firebase
 project id) and seeds **Mobile Configuration** (LMS doctypes for the SDK's

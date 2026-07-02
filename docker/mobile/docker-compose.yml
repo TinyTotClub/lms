@@ -44,8 +44,9 @@ services:
       # Bench survives `docker compose down`; wiped by `down -v`
       - bench-data:/home/frappe
     ports:
-      - 8000:8000
-      - 9000:9000
+      # Host ports configurable to avoid clashes (e.g. Supabase kong on 8000)
+      - ${LMS_HTTP_PORT:-8090}:8000
+      - ${LMS_SOCKETIO_PORT:-9002}:9000
 
 volumes:
   mariadb-data:
