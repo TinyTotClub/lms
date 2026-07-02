@@ -1,0 +1,52 @@
+name: lms-mobile
+
+services:
+  mariadb:
+    image: mariadb:10.8
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --skip-character-set-client-handshake
+      - --skip-innodb-read-only-compressed
+    environment:
+      MYSQL_ROOT_PASSWORD: 123
+    volumes:
+      - mariadb-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 5s
+      retries: 20
+
+  redis:
+    image: redis:alpine
+
+  frappe:
+    image: frappe/bench:latest
+    command: bash /workspace/init.sh
+    environment:
+      - SHELL=/bin/bash
+      # Set these in a local .env file (gitignored) — see .env.example
+      - FIREBASE_PROJECT_ID=${FIREBASE_PROJECT_ID:-}
+      - FIREBASE_AUTH_EMULATOR_HOST=${FIREBASE_AUTH_EMULATOR_HOST:-}
+      - MOBILE_PACKAGE_NAME=${MOBILE_PACKAGE_NAME:-}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-admin}
+      - SITE_NAME=${SITE_NAME:-lms.localhost}
+    working_dir: /home/frappe
+    depends_on:
+      mariadb:
+        condition: service_healthy
+    volumes:
+      - ./:/workspace
+      # Local app checkouts (sibling repos; override paths in .env if different)
+      - ../..:/workspace/apps-src/lms
+      - ${MOBILE_CONTROL_PATH:-../../../frappe-mobile-control}:/workspace/apps-src/mobile_control
+      - ${LMS_MOBILE_BRIDGE_PATH:-../../../lms_mobile_bridge}:/workspace/apps-src/lms_mobile_bridge
+      # Bench survives `docker compose down`; wiped by `down -v`
+      - bench-data:/home/frappe
+    ports:
+      - 8000:8000
+      - 9000:9000
+
+volumes:
+  mariadb-data:
+  bench-data:
