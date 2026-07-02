@@ -30,7 +30,9 @@ if [ -d "/home/frappe/frappe-bench/apps/frappe" ]; then
 fi
 
 echo "Creating new bench..."
-export PATH="${NVM_DIR}/versions/node/v${NODE_VERSION_DEVELOP}/bin/:${PATH}"
+if [ -n "${NVM_DIR:-}" ] && [ -n "${NODE_VERSION_DEVELOP:-}" ]; then
+    export PATH="${NVM_DIR}/versions/node/v${NODE_VERSION_DEVELOP}/bin/:${PATH}"
+fi
 
 bench init --skip-redis-config-generation frappe-bench
 cd frappe-bench
