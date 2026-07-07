@@ -67,9 +67,32 @@ def get_user_info():
 	user.is_instructor = "Course Creator" in user.roles
 	user.is_moderator = "Moderator" in user.roles
 	user.is_evaluator = "Batch Evaluator" in user.roles
-	user.is_student = not user.is_instructor and not user.is_moderator and not user.is_evaluator
+	user.is_trainer = "LMS Trainer" in user.roles
+	user.is_master_trainer = "LMS Master Trainer" in user.roles
+	user.is_lms_manager = "LMS Manager" in user.roles
+	user.is_lms_hr = "LMS HR" in user.roles
+	user.is_student = not any(
+		[
+			user.is_instructor,
+			user.is_moderator,
+			user.is_evaluator,
+			user.is_trainer,
+			user.is_master_trainer,
+			user.is_lms_manager,
+			user.is_lms_hr,
+		]
+	)
+	user.employee = None
+	if frappe.db.exists("DocType", "Employee"):
+		user.employee = frappe.db.get_value(
+			"Employee",
+			{"user_id": frappe.session.user, "status": "Active"},
+			["name", "employee_name", "reports_to", "department", "designation"],
+			as_dict=True,
+		)
 	user.is_fc_site = is_fc_site()
 	user.is_system_manager = "System Manager" in user.roles
+	user.is_hr_manager = "HR Manager" in user.roles
 	user.sitename = frappe.local.site
 	user.developer_mode = frappe.conf.developer_mode
 	if user.is_fc_site and user.is_system_manager:
@@ -511,7 +534,7 @@ def get_certification_categories():
 
 @frappe.whitelist()
 def get_all_users():
-	frappe.only_for(["Moderator", "Course Creator", "Batch Evaluator"])
+	frappe.only_for(["Moderator", "Course Creator", "Batch Evaluator", "LMS HR", "LMS Master Trainer"])
 	users = frappe.get_all(
 		"User",
 		{
@@ -519,6 +542,15 @@ def get_all_users():
 		},
 		["name", "full_name", "user_image"],
 	)
+
+	for user in users:
+		roles = frappe.get_roles(user.name)
+		user.is_moderator = "Moderator" in roles
+		user.is_instructor = "Course Creator" in roles
+		user.is_evaluator = "Batch Evaluator" in roles
+		user.is_student = "LMS Student" in roles
+		user.is_trainer = "LMS Trainer" in roles
+		user.is_master_trainer = "LMS Master Trainer" in roles
 
 	return {user.name: user for user in users}
 
@@ -721,9 +753,18 @@ def update_chapter_index(chapter: str, course: str, idx: int):
 
 @frappe.whitelist()
 def get_members(start: int = 0, search: str = None, role: str = "All"):
-	frappe.only_for(["Moderator"])
+	frappe.only_for(["Moderator", "LMS HR"])
 
-	lms_roles = ["Moderator", "Course Creator", "Batch Evaluator", "LMS Student"]
+	lms_roles = [
+		"LMS HR",
+		"Moderator",
+		"LMS Master Trainer",
+		"Course Creator",
+		"LMS Trainer",
+		"Batch Evaluator",
+		"LMS Manager",
+		"LMS Student",
+	]
 	if not isinstance(role, str) or role not in (["All"] + lms_roles):
 		frappe.throw(_("Invalid role filter."), frappe.ValidationError)
 	if search is not None and not isinstance(search, str):
@@ -2259,11 +2300,22 @@ def get_popular_courses():
 
 @frappe.whitelist()
 def get_my_batches():
+	from lms.lms.utils import restrict_lms_visibility_enabled
+
 	my_batches = []
 	batches = get_my_latest_batches()
 
 	if not len(batches):
-		batches = get_upcoming_batches()
+		# In corporate-training mode, only privileged users get upcoming-batch suggestions
+		show_upcoming = True
+		if restrict_lms_visibility_enabled():
+			user_roles = frappe.get_roles(frappe.session.user)
+			show_upcoming = any(
+				role in user_roles
+				for role in ["System Manager", "Moderator", "LMS HR", "LMS Master Trainer", "Course Creator"]
+			)
+		if show_upcoming:
+			batches = get_upcoming_batches()
 
 	for batch in batches:
 		batch_details = get_batch_details(batch)
@@ -2581,3 +2633,104 @@ def export_course_as_zip(course_name: str):
 def import_course_from_zip(zip_file_path: str):
 	frappe.only_for(["Moderator", "Course Creator"])
 	return import_course_zip(zip_file_path)
+
+
+@frappe.whitelist()
+def get_trainer_students():
+	"""Members of the batches where the session user is an instructor.
+
+	Returns None for privileged users (no restriction) and [] for trainers
+	without batches."""
+	user_roles = frappe.get_roles(frappe.session.user)
+	is_super = any(
+		role in user_roles for role in ["System Manager", "Moderator", "LMS HR", "LMS Master Trainer"]
+	)
+
+	if is_super:
+		return None
+
+	batch_names = frappe.get_all(
+		"Course Instructor",
+		{"instructor": frappe.session.user, "parenttype": "LMS Batch"},
+		pluck="parent",
+	)
+	batch_names = list(set(batch_names))
+
+	if not batch_names:
+		return []
+
+	members = frappe.get_all(
+		"LMS Batch Enrollment",
+		{"batch": ["in", batch_names]},
+		pluck="member",
+	)
+	return list(set(members))
+
+
+@frappe.whitelist()
+def get_my_assignment_submission(assignment: str):
+	"""The session user's submission for an assignment."""
+	submission = frappe.db.get_value(
+		"LMS Assignment Submission",
+		{"assignment": assignment, "member": frappe.session.user},
+		"name",
+	)
+	return {"name": submission or None}
+
+
+@frappe.whitelist()
+def delete_assignment(assignment_name: str):
+	"""Delete an assignment along with all its submissions."""
+	frappe.only_for(["LMS Master Trainer", "LMS HR", "Moderator", "LMS Trainer"])
+
+	if not frappe.db.exists("LMS Assignment", assignment_name):
+		frappe.throw(_("Assignment {0} does not exist").format(assignment_name))
+
+	submissions = frappe.get_all(
+		"LMS Assignment Submission",
+		{"assignment": assignment_name},
+		pluck="name",
+	)
+
+	for submission in submissions:
+		frappe.delete_doc("LMS Assignment Submission", submission, ignore_permissions=True, force=True)
+
+	frappe.delete_doc("LMS Assignment", assignment_name, ignore_permissions=True, force=True)
+
+	return {
+		"message": _("Assignment deleted successfully"),
+		"submissions_deleted": len(submissions),
+	}
+
+
+@frappe.whitelist()
+def get_lms_trainers(txt: str = ""):
+	"""Users holding the LMS Trainer role, for instructor selection."""
+	Users = frappe.qb.DocType("User")
+	HasRole = frappe.qb.DocType("Has Role")
+	query = (
+		frappe.qb.from_(Users)
+		.inner_join(HasRole)
+		.on(HasRole.parent == Users.name)
+		.where((HasRole.role == "LMS Trainer") & (Users.enabled == 1))
+		.select(Users.name.as_("value"), Users.full_name.as_("description"))
+		.distinct()
+		.orderby(Users.full_name)
+		.limit(20)
+	)
+	if txt:
+		query = query.where((Users.name.like(f"%{txt}%")) | (Users.full_name.like(f"%{txt}%")))
+	return query.run(as_dict=True)
+
+
+@frappe.whitelist()
+def get_course_instructors(course: str):
+	"""Instructors assigned to a course."""
+	if not course:
+		return []
+
+	return frappe.get_all(
+		"Course Instructor",
+		{"parent": course, "parenttype": "LMS Course"},
+		["instructor"],
+	)

@@ -33,7 +33,16 @@ from lms.lms.doctype.lms_enrollment.lms_enrollment import update_program_progres
 from lms.lms.md import find_macros
 
 RE_SLUG_NOTALLOWED = re.compile("[^a-z0-9]+")
-LMS_ROLES = ["Moderator", "Course Creator", "Batch Evaluator", "LMS Student"]
+LMS_ROLES = [
+	"Moderator",
+	"Course Creator",
+	"Batch Evaluator",
+	"LMS Student",
+	"LMS Trainer",
+	"LMS Master Trainer",
+	"LMS Manager",
+	"LMS HR",
+]
 
 
 def get_lms_path():
@@ -358,7 +367,8 @@ def get_course_progress(course: str, member: str = None):
 		{"course": course, "member": member or frappe.session.user, "status": "Complete"},
 	)
 	precision = cint(frappe.db.get_default("float_precision")) or 3
-	return flt(((completed_lessons / lesson_count) * 100), precision)
+	progress = flt(((completed_lessons / lesson_count) * 100), precision)
+	return min(progress, 100)
 
 
 def is_instructor(course: str) -> bool:
@@ -397,6 +407,38 @@ def has_student_role(member: str = None):
 	return frappe.db.get_value(
 		"Has Role",
 		{"parent": member or frappe.session.user, "role": "LMS Student"},
+		"name",
+	)
+
+
+def has_trainer_role(member: str = None):
+	return frappe.db.get_value(
+		"Has Role",
+		{"parent": member or frappe.session.user, "role": "LMS Trainer"},
+		"name",
+	)
+
+
+def has_master_trainer_role(member: str = None):
+	return frappe.db.get_value(
+		"Has Role",
+		{"parent": member or frappe.session.user, "role": "LMS Master Trainer"},
+		"name",
+	)
+
+
+def has_lms_manager_role(member: str = None):
+	return frappe.db.get_value(
+		"Has Role",
+		{"parent": member or frappe.session.user, "role": "LMS Manager"},
+		"name",
+	)
+
+
+def has_lms_hr_role(member: str = None):
+	return frappe.db.get_value(
+		"Has Role",
+		{"parent": member or frappe.session.user, "role": "LMS HR"},
 		"name",
 	)
 
@@ -782,6 +824,10 @@ def get_courses(filters: dict = None, start: int = 0) -> list:
 		filters = {}
 
 	filters, or_filters, show_featured = update_course_filters(filters)
+
+	# Optional role-based catalog restriction (corporate-training mode)
+	filters = apply_role_based_course_visibility(filters)
+
 	fields = get_course_fields()
 
 	courses = frappe.get_all(
@@ -799,6 +845,124 @@ def get_courses(filters: dict = None, start: int = 0) -> list:
 	courses = get_enrollment_details(courses)
 	courses = get_course_card_details(courses)
 	return courses
+
+
+def restrict_lms_visibility_enabled() -> bool:
+	"""Corporate-training mode: non-privileged users only see enrolled/assigned content.
+
+	Off by default; enable with `restrict_lms_visibility: 1` in site_config.json.
+	"""
+	return bool(frappe.conf.get("restrict_lms_visibility"))
+
+
+def apply_role_based_course_visibility(filters: dict) -> dict:
+	"""Restrict course visibility based on LMS roles (only in corporate-training mode).
+
+	- System Manager / Moderator / LMS HR / LMS Master Trainer / Course Creator: see all
+	- LMS Trainer: enrolled + courses they instruct
+	- LMS Manager: enrolled + direct reports' courses (needs the Employee doctype)
+	- Everyone else: only enrolled courses
+	"""
+	if not restrict_lms_visibility_enabled():
+		return filters
+
+	if frappe.session.user in ("Guest", "Administrator"):
+		return filters
+
+	user_roles = frappe.get_roles(frappe.session.user)
+	is_super = any(
+		role in user_roles
+		for role in ["System Manager", "Moderator", "LMS HR", "LMS Master Trainer", "Course Creator"]
+	)
+	if is_super:
+		return filters
+
+	# Already restricted to an explicit set (e.g. enrolled filter) — leave as is
+	if "name" in filters and isinstance(filters.get("name"), list) and filters["name"][0] == "in":
+		return filters
+
+	allowed_courses = set()
+
+	enrolled = frappe.get_all("LMS Enrollment", {"member": frappe.session.user}, pluck="course")
+	allowed_courses.update(enrolled)
+
+	if "LMS Trainer" in user_roles:
+		instructor_courses = frappe.get_all(
+			"Course Instructor", {"instructor": frappe.session.user}, pluck="parent"
+		)
+		for course in instructor_courses:
+			if frappe.db.exists("LMS Course", course):
+				allowed_courses.add(course)
+
+	if "LMS Manager" in user_roles:
+		allowed_courses.update(get_team_content("LMS Enrollment", "course"))
+
+	filters["name"] = ["in", list(allowed_courses)]
+	return filters
+
+
+def apply_role_based_batch_visibility(filters: dict) -> dict:
+	"""Restrict batch visibility based on LMS roles (only in corporate-training mode)."""
+	if not restrict_lms_visibility_enabled():
+		return filters
+
+	if frappe.session.user in ("Guest", "Administrator"):
+		return filters
+
+	user_roles = frappe.get_roles(frappe.session.user)
+	is_super = any(role in user_roles for role in ["System Manager", "LMS HR", "LMS Master Trainer"])
+	if is_super:
+		return filters
+
+	if "name" in filters and isinstance(filters.get("name"), list) and filters["name"][0] == "in":
+		return filters
+
+	allowed_batches = set()
+
+	enrolled = frappe.get_all("LMS Batch Enrollment", {"member": frappe.session.user}, pluck="batch")
+	allowed_batches.update(enrolled)
+
+	if "LMS Trainer" in user_roles:
+		instructor_batches = frappe.get_all(
+			"Course Instructor", {"instructor": frappe.session.user}, pluck="parent"
+		)
+		for batch in instructor_batches:
+			if frappe.db.exists("LMS Batch", batch):
+				allowed_batches.add(batch)
+
+	if "LMS Manager" in user_roles:
+		allowed_batches.update(get_team_content("LMS Batch Enrollment", "batch"))
+
+	filters["name"] = ["in", list(allowed_batches)]
+	return filters
+
+
+def get_team_content(enrollment_doctype: str, fieldname: str) -> list:
+	"""Content of the manager's direct reports, resolved via the Employee hierarchy.
+
+	Returns an empty list when the Employee doctype (HRMS) is not installed.
+	"""
+	if not frappe.db.exists("DocType", "Employee"):
+		return []
+
+	emp_id = frappe.db.get_value("Employee", {"user_id": frappe.session.user, "status": "Active"}, "name")
+	if not emp_id:
+		return []
+
+	report_user_ids = frappe.get_all(
+		"Employee",
+		{"reports_to": emp_id, "status": "Active"},
+		pluck="user_id",
+	)
+	report_user_ids = [uid for uid in report_user_ids if uid]
+	if not report_user_ids:
+		return []
+
+	return frappe.get_all(
+		enrollment_doctype,
+		{"member": ["in", report_user_ids]},
+		pluck=fieldname,
+	)
 
 
 @frappe.whitelist(allow_guest=True)
@@ -1054,7 +1218,55 @@ def get_course_outline(course: str, progress: bool = False) -> list:
 	files_by_name = get_scorm_files(chapters)
 	completed = get_completed_lessons(course, lesson_rows) if progress else set()
 
-	return build_outline(chapters, lesson_rows, files_by_name, completed, progress)
+	outline = build_outline(chapters, lesson_rows, files_by_name, completed, progress)
+	return apply_sequential_locking(course, outline)
+
+
+def apply_sequential_locking(course: str, outline: list) -> list:
+	"""Lock chapters until the previous ones are complete, for courses with
+	sequential learning enabled. Manual unlocks (LMS Course Progress rows with
+	manually_unlocked set) and privileged roles bypass the locks."""
+	for chapter in outline:
+		chapter.is_locked = False
+		chapter.manually_unlocked = False
+
+	if frappe.session.user == "Guest" or not outline:
+		return outline
+
+	if not frappe.db.get_value("LMS Course", course, "enable_sequential_learning"):
+		return outline
+
+	user_roles = frappe.get_roles(frappe.session.user)
+	if any(role in user_roles for role in ["LMS Master Trainer", "LMS HR", "System Manager"]):
+		return outline
+
+	member = frappe.session.user
+	progress_rows = frappe.get_all(
+		"LMS Course Progress",
+		{"course": course, "member": member},
+		["chapter", "lesson", "status", "manually_unlocked"],
+	)
+	completed_lessons = {row.lesson for row in progress_rows if row.status == "Complete" and row.lesson}
+	completed_chapters = {row.chapter for row in progress_rows if row.status == "Complete" and row.chapter}
+	unlocked_chapters = {row.chapter for row in progress_rows if row.manually_unlocked and row.chapter}
+
+	all_previous_complete = True
+	for chapter in outline:
+		if chapter.name in unlocked_chapters:
+			chapter.is_locked = False
+			chapter.manually_unlocked = True
+		else:
+			chapter.is_locked = not all_previous_complete
+
+		if chapter.is_scorm_package:
+			chapter_complete = chapter.name in completed_chapters
+		else:
+			chapter_complete = all(lesson.name in completed_lessons for lesson in chapter.lessons)
+
+		if not chapter_complete and chapter.name not in unlocked_chapters:
+			all_previous_complete = False
+
+	return outline
 
 
 def get_outline_chapter(course: str) -> list:
@@ -2110,12 +2322,16 @@ def get_lesson_creation_details(course: str, chapter: int, lesson: int) -> dict:
 
 @frappe.whitelist()
 def get_roles(name: str) -> dict:
-	frappe.only_for(["Moderator", "Batch Evaluator"])
+	frappe.only_for(["Moderator", "Batch Evaluator", "LMS HR"])
 	return {
 		"moderator": has_moderator_role(name),
 		"course_creator": has_course_instructor_role(name),
 		"batch_evaluator": has_evaluator_role(name),
 		"lms_student": has_student_role(name),
+		"lms_trainer": has_trainer_role(name),
+		"lms_master_trainer": has_master_trainer_role(name),
+		"lms_manager": has_lms_manager_role(name),
+		"lms_hr": has_lms_hr_role(name),
 	}
 
 
@@ -2390,6 +2606,9 @@ def get_batches(filters: dict = None, start: int = 0, order_by: str = "start_dat
 		)
 		filters.update({"name": ["in", enrolled_batches]})
 		del filters["enrolled"]
+
+	# Optional role-based batch restriction (corporate-training mode)
+	filters = apply_role_based_batch_visibility(filters)
 
 	batches = frappe.get_all(
 		"LMS Batch",

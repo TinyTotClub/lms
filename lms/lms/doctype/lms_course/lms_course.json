@@ -24,6 +24,7 @@
   "upcoming",
   "featured",
   "disable_self_learning",
+  "enable_sequential_learning",
   "section_break_18",
   "short_introduction",
   "column_break_viqw",
@@ -296,6 +297,13 @@
    "fieldtype": "Check",
    "label": "Notification Sent",
    "read_only": 1
+  },
+  {
+   "default": "0",
+   "description": "Lock chapters/lessons until previous ones are completed",
+   "fieldname": "enable_sequential_learning",
+   "fieldtype": "Check",
+   "label": "Enable Sequential Learning"
   }
  ],
  "is_published_field": "published",
@@ -314,7 +322,7 @@
   }
  ],
  "make_attachments_public": 1,
- "modified": "2026-02-19 11:41:57.038869",
+ "modified": "2026-07-02 13:30:00.000000",
  "modified_by": "sayali@frappe.io",
  "module": "LMS",
  "name": "LMS Course",

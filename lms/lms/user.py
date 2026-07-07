@@ -23,6 +23,22 @@ def add_lms_student_role(doc, method):
 	doc.append_roles("LMS Student")
 
 
+def on_update(doc, method):
+	"""Auto-assign the LMS Student role when an LMS role profile is assigned."""
+	lms_role_profiles = [
+		"LMS Student",
+		"LMS Trainer",
+		"LMS Master Trainer",
+		"LMS Manager",
+		"LMS HR",
+	]
+
+	if doc.role_profile_name and doc.role_profile_name in lms_role_profiles:
+		current_roles = [r.role for r in doc.roles]
+		if "LMS Student" not in current_roles:
+			doc.add_roles("LMS Student")
+
+
 @frappe.whitelist(allow_guest=True)  # nosemgrep: frappe-semgrep-rules.rules.security.guest-whitelisted-method
 def sign_up(email: str, full_name: str, verify_terms: bool, user_category: str):
 	if is_signup_disabled():
@@ -90,4 +106,8 @@ def set_country_from_ip(login_manager: object = None, user: str = None):
 def on_login(login_manager):
 	default_app = frappe.db.get_single_value("System Settings", "default_app")
 	if default_app == "lms":
-		frappe.local.response["home_page"] = get_lms_route()
+		user_roles = frappe.get_roles(frappe.session.user)
+		if "LMS HR" in user_roles:
+			frappe.local.response["home_page"] = "/app"
+		else:
+			frappe.local.response["home_page"] = get_lms_route()
